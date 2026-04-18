@@ -1,0 +1,89 @@
+# =============================================================================
+# FasttrackrAI — .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Python / Backend
+# -----------------------------------------------------------------------------
+backend/venv/
+backend/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Secrets & local config — NEVER commit
+backend/.env
+.env
+.env.*
+!.env.example
+
+# SQLite remnant (project uses PostgreSQL)
+backend/*.db
+*.db
+*.sqlite3
+
+# Generated transcript files (runtime output)
+backend/transcripts/
+
+# Alembic auto-generated (keep versions/, ignore compiled caches)
+backend/alembic/__pycache__/
+
+# Coverage / test artifacts
+.coverage
+htmlcov/
+.pytest_cache/
+*.log
+
+# -----------------------------------------------------------------------------
+# Node / Frontend
+# -----------------------------------------------------------------------------
+frontend/node_modules/
+node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Local env overrides
+frontend/.env.local
+frontend/.env.*.local
+
+# Type-check / lint caches
+frontend/.tsbuildinfo
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# macOS
+# -----------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# -----------------------------------------------------------------------------
+# IDE / Editor
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# Claude Code session files
+# -----------------------------------------------------------------------------
+.claude/
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.bak
+*.tmp
+Thumbs.db
