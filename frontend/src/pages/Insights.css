@@ -1,0 +1,131 @@
+.ins-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.ins-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.ins-chart-card {
+  min-width: 0;
+}
+
+.ins-chart-wide {
+  grid-column: 1 / -1;
+}
+
+/* Pie Legend */
+.ins-pie-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.ins-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+}
+
+.ins-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ins-legend-name {
+  color: var(--color-text-secondary);
+}
+
+.ins-legend-value {
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-left: 2px;
+}
+
+/* Pie center text */
+.pie-center-title {
+  font-size: 13px;
+  font-weight: 600;
+  fill: #0f172a;
+}
+
+.pie-center-value {
+  font-size: 14px;
+  font-weight: 700;
+  fill: #2563eb;
+}
+
+/* Chart Tooltip */
+.chart-tooltip {
+  background: var(--color-primary);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  box-shadow: var(--shadow-lg);
+  min-width: 160px;
+}
+
+.chart-tooltip-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.chart-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chart-tooltip-name {
+  font-size: 0.8125rem;
+  color: rgba(255,255,255,0.75);
+  flex: 1;
+}
+
+.chart-tooltip-value {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: white;
+}
+
+@media (max-width: 1024px) {
+  .ins-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .ins-charts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ins-chart-wide {
+    grid-column: 1;
+  }
+
+  .ins-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
