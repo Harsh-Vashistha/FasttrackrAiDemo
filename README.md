@@ -254,20 +254,49 @@ Upload Audio
 
 ### What Context the LLM Receives
 
-Getting reliable structured output from an LLM requires injecting the right context. The agent receives five layers:
+Getting reliable structured output from an LLM requires injecting the right context. The agent receives six layers:
 
-#### 1. Full DB Snapshot (`_build_db_context`)
+#### 0. Client Pre-Identification (before the LLM call)
+
+Before building any prompt, `run_agent()` does a cheap **regex + fuzzy-match** step to figure out which household the transcript is about:
+
+```python
+name_hint  = _extract_client_name_hint(transcript)   # regex scan — no API call
+matched_id = _find_matching_household(name_hint, db)  # fuzzy match against household names
+db_context = _build_household_context(matched_id, db) # scoped to ONE household
 ```
-┌─ Household  id:3
+
+`_extract_client_name_hint()` tries several patterns in priority order:
+1. Explicit statement: `"full legal name is Benjamin Walter Thompson Jr."`
+2. `"new client prospect, Benjamin Walter"`
+3. `"meeting with / spoke with / call with <Name>"`
+4. `"client / named <Name>"`
+
+**Why do this before the LLM call?**  
+The DB context is scoped to the single matched household. All other clients' data is excluded from the prompt entirely — improving privacy, reducing token count, and eliminating any risk of Claude confusing fields across different households.
+
+#### 1. Targeted Client Snapshot (`_build_household_context`)
+
+```
+┌─ Household  id:3  ← use this id for entity_id when entity_type='household'
 │  name:                        Raj and Priya Sharma
 │  risk_tolerance:               Aggressive
 │  annual_income:                200000.0
 │  ...all other fields...
-│  ├─ Member  id:5  name: Raj Sharma
+│  ├─ Member  id:5  ← use this id for entity_id when entity_type='member'
+│  │  name:           Raj Sharma
 │  │  email:          raj@example.com
 │  │  occupation:     Engineer
-│  ├─ Account  id:8  type:Roth IRA  custodian:Fidelity
+│  ├─ Account  id:8  ← use this id for entity_id when entity_type='account'
+│    type:Roth IRA  custodian:Fidelity
 ```
+
+If no fuzzy match is found (new client), Claude receives instead:
+```
+No matching household found in the database — treat this as a NEW CLIENT.
+Use entity_type = 'new_household', 'new_member', 'new_account' and set entity_id = null.
+```
+
 **Why:** Claude needs to see current field values — not just household names — so it can:
 - Avoid proposing changes to fields that are already correct
 - Generate the right `entity_id` for member and account updates (not just household)
@@ -365,7 +394,7 @@ Python code                           Claude
 
 Claude makes **zero database calls**. It receives a text snapshot prepared by Python, reasons over it once, and returns JSON. It is a sophisticated text-in / text-out transformer — not an orchestrator.
 
-The DB context injected via `_build_db_context()` is a **frozen photograph** taken at call time. If the DB changes while Claude is processing, it will not know. If Claude needs deeper information about a specific account, it cannot ask.
+The client snapshot injected via `_build_household_context()` is a **frozen photograph** of that one household taken at call time. If the DB changes while Claude is processing, it will not know. If Claude needs deeper information about a specific account, it cannot ask.
 
 ---
 
@@ -497,9 +526,9 @@ def run_true_agent(transcript: str, db: Session) -> list:
 
 #### Migration path to true agent
 
-When the household count grows beyond ~500 (where the full DB snapshot becomes expensive):
+The current system already scopes context to one client per transcript via `_build_household_context()`. When the matched household itself becomes too large (hundreds of accounts/members) or when multi-client transcripts arise:
 
-1. Replace `_build_db_context()` with the three tools above (`search_households`, `get_household_details`, `propose_change`)
+1. Replace `_build_household_context()` with the three tools above (`search_households`, `get_household_details`, `propose_change`)
 2. Replace the single `client.messages.create()` call with the agent loop shown above
 3. The rest of the system (Review Queue, apply step, human-in-the-loop) stays identical
 

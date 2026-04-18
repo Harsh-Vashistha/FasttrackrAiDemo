@@ -367,50 +367,100 @@ def _strip_code_fences(text: str) -> str:
     return text.strip()
 
 
-def _build_db_context(db: Session) -> str:
+def _extract_client_name_hint(transcript: str) -> str | None:
     """
-    Build a full snapshot of the current DB state for injection into the LLM prompt.
+    Quick regex pre-scan to extract a likely client name from the transcript.
 
-    Why inject the full state (not just names)?
-    - Claude needs current field values to avoid proposing unchanged data
-    - Claude needs member/account IDs to generate correct entity_id for updates
-    - Claude needs to see what is NULL vs populated to know what still needs filling
+    This runs BEFORE the LLM call so we can identify which household the
+    transcript is about and scope the DB context to just that client.
+
+    Returns the best-guess name string, or None if extraction fails.
+    Priority order: explicit legal-name statements > "meeting with" patterns > generic.
     """
-    households = db.query(models.Household).all()
-    if not households:
-        return "DATABASE IS EMPTY — no existing households. All clients in this transcript are new."
+    patterns = [
+        # "His full legal name is actually Benjamin Walter Thompson Jr."
+        r'(?:full legal name is(?:\s+actually)?|name is actually)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}(?:\s+(?:Jr\.|Sr\.|II|III|IV))?)',
+        # "first meeting with a new client prospect, Benjamin Walter"
+        r'(?:client prospect|new client)[,\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+        # "meeting with Benjamin Thompson"
+        r'(?:meeting with|spoke with|call with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+        # "client Benjamin Thompson called" / "named Benjamin"
+        r'(?:client|named?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})',
+    ]
+    for pat in patterns:
+        m = re.search(pat, transcript)
+        if m:
+            return m.group(1).strip()
+    return None
 
-    lines = []
-    for hh in households:
-        lines.append(f"\n┌─ Household  id:{hh.id}")
-        lines.append(f"│  name:                        {hh.name}")
-        lines.append(f"│  risk_tolerance:               {hh.risk_tolerance or '—'}")
-        lines.append(f"│  annual_income:                {hh.annual_income or '—'}")
-        lines.append(f"│  estimated_total_net_worth:    {hh.estimated_total_net_worth or '—'}")
-        lines.append(f"│  estimated_liquid_net_worth:   {hh.estimated_liquid_net_worth or '—'}")
-        lines.append(f"│  tax_bracket:                  {hh.tax_bracket or '—'}")
-        lines.append(f"│  primary_investment_objective: {hh.primary_investment_objective or '—'}")
-        lines.append(f"│  time_horizon:                 {hh.time_horizon or '—'}")
-        lines.append(f"│  source_of_funds:              {hh.source_of_funds or '—'}")
-        lines.append(f"│  primary_use_of_funds:         {hh.primary_use_of_funds or '—'}")
-        lines.append(f"│  liquidity_needs:              {hh.liquidity_needs or '—'}")
-        lines.append(f"│  account_decision_making:      {hh.account_decision_making or '—'}")
 
-        members = db.query(models.Member).filter(models.Member.household_id == hh.id).all()
-        for m in members:
-            lines.append(f"│")
-            lines.append(f"│  ├─ Member  id:{m.id}  name: {m.first_name} {m.last_name}")
-            lines.append(f"│  │  email:          {m.email or '—'}")
-            lines.append(f"│  │  phone:          {m.phone or '—'}")
-            lines.append(f"│  │  dob:            {m.dob or '—'}")
-            lines.append(f"│  │  address:        {m.address or '—'}")
-            lines.append(f"│  │  occupation:     {m.occupation or '—'}")
-            lines.append(f"│  │  employer:       {m.employer or '—'}")
-            lines.append(f"│  │  marital_status: {m.marital_status or '—'}")
+def _build_household_context(household_id: int | None, db: Session) -> str:
+    """
+    Build a DB snapshot scoped to a single household for injection into the LLM prompt.
 
-        accounts = db.query(models.Account).filter(models.Account.household_id == hh.id).all()
-        for a in accounts:
-            lines.append(f"│  ├─ Account  id:{a.id}  type:{a.account_type}  custodian:{a.custodian or '—'}  value:{a.account_value or '—'}")
+    Why scope to one household instead of a full DB dump?
+    - Privacy: other clients' data never enters the LLM context
+    - Efficiency: smaller prompt = faster response + lower token cost
+    - Accuracy: no risk of Claude confusing fields from different households
+    - Claude still gets everything it needs: all current field values, member IDs,
+      and account IDs for the matched client so it can generate correct entity_ids
+
+    Args:
+        household_id: The pre-identified household to build context for.
+                      If None (new client or no fuzzy match), returns a
+                      "new client" message so Claude knows to use new_* entity types.
+        db: Active SQLAlchemy session.
+    """
+    if household_id is None:
+        return (
+            "No matching household found in the database — "
+            "treat this as a NEW CLIENT. "
+            "Use entity_type = 'new_household', 'new_member', 'new_account' "
+            "and set entity_id = null for all proposed changes."
+        )
+
+    hh = db.query(models.Household).filter(models.Household.id == household_id).first()
+    if not hh:
+        return (
+            "No matching household found in the database — "
+            "treat this as a NEW CLIENT. "
+            "Use entity_type = 'new_household', 'new_member', 'new_account' "
+            "and set entity_id = null for all proposed changes."
+        )
+
+    lines = [f"\n┌─ Household  id:{hh.id}  ← use this id for entity_id when entity_type='household'"]
+    lines.append(f"│  name:                        {hh.name}")
+    lines.append(f"│  risk_tolerance:               {hh.risk_tolerance or '—'}")
+    lines.append(f"│  annual_income:                {hh.annual_income or '—'}")
+    lines.append(f"│  estimated_total_net_worth:    {hh.estimated_total_net_worth or '—'}")
+    lines.append(f"│  estimated_liquid_net_worth:   {hh.estimated_liquid_net_worth or '—'}")
+    lines.append(f"│  tax_bracket:                  {hh.tax_bracket or '—'}")
+    lines.append(f"│  primary_investment_objective: {hh.primary_investment_objective or '—'}")
+    lines.append(f"│  time_horizon:                 {hh.time_horizon or '—'}")
+    lines.append(f"│  source_of_funds:              {hh.source_of_funds or '—'}")
+    lines.append(f"│  primary_use_of_funds:         {hh.primary_use_of_funds or '—'}")
+    lines.append(f"│  liquidity_needs:              {hh.liquidity_needs or '—'}")
+    lines.append(f"│  account_decision_making:      {hh.account_decision_making or '—'}")
+
+    members = db.query(models.Member).filter(models.Member.household_id == hh.id).all()
+    for m in members:
+        lines.append(f"│")
+        lines.append(f"│  ├─ Member  id:{m.id}  ← use this id for entity_id when entity_type='member'")
+        lines.append(f"│  │  name:           {m.first_name} {m.last_name}")
+        lines.append(f"│  │  email:          {m.email or '—'}")
+        lines.append(f"│  │  phone:          {m.phone or '—'}")
+        lines.append(f"│  │  dob:            {m.dob or '—'}")
+        lines.append(f"│  │  address:        {m.address or '—'}")
+        lines.append(f"│  │  occupation:     {m.occupation or '—'}")
+        lines.append(f"│  │  employer:       {m.employer or '—'}")
+        lines.append(f"│  │  marital_status: {m.marital_status or '—'}")
+
+    accounts = db.query(models.Account).filter(models.Account.household_id == hh.id).all()
+    for a in accounts:
+        lines.append(
+            f"│  ├─ Account  id:{a.id}  ← use this id for entity_id when entity_type='account'"
+            f"  type:{a.account_type}  custodian:{a.custodian or '—'}  value:{a.account_value or '—'}"
+        )
 
     return "\n".join(lines)
 
@@ -532,8 +582,14 @@ def run_agent(transcript: str, db: Session) -> dict:
     Analyze a transcript against the current DB state and propose field-level changes.
 
     Context strategy (why each piece is injected):
-      1. Full DB snapshot   — so Claude knows current field values and can avoid re-proposing
-                              unchanged data, and can find correct entity IDs for updates
+      0. Client pre-identification — regex scan extracts a name hint from the transcript,
+                              then fuzzy-matches it against household names to identify
+                              which single household this transcript is about BEFORE
+                              making the LLM call (no API key needed for this step)
+      1. Targeted client snapshot — only the matched household's current field values,
+                              member IDs, and account IDs are injected.  Other clients'
+                              data never enters the prompt (privacy + efficiency).
+                              If no match is found, a "new client" message is injected.
       2. Typed schema       — so Claude uses exact field names and understands valid value formats
       3. Entity rules       — so Claude correctly decides new_household vs household, etc.
       4. Whisper awareness  — so Claude flags artifacts and doesn't blindly trust mishearings
@@ -544,7 +600,13 @@ def run_agent(transcript: str, db: Session) -> dict:
     if _mock_mode():
         return _mock_run_agent(transcript, db)
 
-    db_context = _build_db_context(db)
+    # Step 0: Pre-identify the household this transcript is about.
+    # We do this with a cheap regex + fuzzy-match so the LLM context is
+    # scoped to one client only — not a full DB dump.
+    name_hint = _extract_client_name_hint(transcript)
+    matched_id = _find_matching_household(name_hint, db) if name_hint else None
+
+    db_context = _build_household_context(matched_id, db)
 
     prompt = f"""You are a financial CRM assistant for a wealth management firm.
 Your job is to analyze advisor meeting notes and propose precise, field-level database changes.
@@ -557,7 +619,7 @@ Your job is to analyze advisor meeting notes and propose precise, field-level da
 
 {_FEW_SHOT}
 
-## Current Database State (read carefully before proposing changes)
+## Current Database State — Scoped to This Client Only
 {db_context}
 
 ## Transcript to Analyze
