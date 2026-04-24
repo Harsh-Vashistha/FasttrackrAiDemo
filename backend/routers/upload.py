@@ -19,8 +19,8 @@ from database import get_db
 import models
 import schemas
 from parsers.csv_parser import parse_file
-from parsers.audio_parser import transcribe_audio, extract_financial_data
-from parsers.review_agent import run_agent
+from parsers.audio_parser import transcribe_audio
+from parsers.agent import run_agent
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -335,10 +335,10 @@ async def upload_audio(
             tmp.write(contents)
             tmp_path = tmp.name
 
-        # Transcribe
+        # Step 1 — Transcribe with Whisper
         transcription = transcribe_audio(tmp_path)
 
-        # ---- Save transcript to file so it can be reviewed ------------------
+        # Step 2 — Save raw transcript to disk for audit / debugging
         TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_stem = Path(file.filename).stem.replace(" ", "_")
@@ -349,24 +349,28 @@ async def upload_audio(
             f.write(f"Uploaded : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Household: {household_name or 'not linked'}\n")
             f.write("=" * 60 + "\n\n")
-            f.write("TRANSCRIPT\n")
-            f.write("-" * 60 + "\n")
             f.write(transcription)
-            f.write("\n\n")
-            f.write("EXTRACTED DATA (filled in after Claude call)\n")
-            f.write("-" * 60 + "\n")
-            f.write("(see below after extraction completes)\n")
 
-        # Extract structured data via Claude
-        extracted_data = extract_financial_data(transcription, household_name=household_name)
+        # Step 3 — Run the LangGraph extraction agent
+        # household_id comes directly from the user's frontend selection —
+        # no regex or fuzzy matching. None means new client.
+        agent_result = run_agent(transcription, db, household_id=household_id)
 
-        # Append extracted JSON to the same transcript file
+        # Append structured output to the transcript file
         with open(transcript_path, "a", encoding="utf-8") as f:
-            f.seek(0, 2)  # ensure we're at end of file
-            # Overwrite the placeholder line
+            f.write("\n\n" + "=" * 60 + "\n")
+            f.write("AGENT EXTRACTION OUTPUT\n")
+            f.write("=" * 60 + "\n")
+            f.write(json.dumps(agent_result, indent=2, default=str))
             f.write("\n")
-            f.write(json.dumps(extracted_data, indent=2))
-            f.write("\n")
+
+        # Build extracted_data dict for AudioInsight storage
+        extracted_data = {
+            "household_name": agent_result.get("proposed_household_name"),
+            "key_insights":   agent_result.get("key_insights", []),
+            "action_items":   agent_result.get("action_items", []),
+            "agent_summary":  agent_result.get("agent_summary", ""),
+        }
 
     except HTTPException:
         raise
@@ -403,17 +407,15 @@ async def upload_audio(
             ))
     db.commit()
 
-    # ---- Run review agent to propose field-level changes -------------------
+    # ---- Persist review session and proposed changes -----------------------
     review_session_id: Optional[int] = None
     try:
-        agent_result = run_agent(transcription, db)
-
         review_session = models.ReviewSession(
             audio_insight_id=insight.id,
             status="pending",
             matched_household_id=agent_result.get("matched_household_id"),
             proposed_household_name=agent_result.get("proposed_household_name"),
-            is_new_client=str(agent_result.get("is_new_client", "true")).lower(),
+            is_new_client=str(agent_result.get("is_new_client", True)).lower(),
             agent_summary=agent_result.get("agent_summary", ""),
         )
         db.add(review_session)

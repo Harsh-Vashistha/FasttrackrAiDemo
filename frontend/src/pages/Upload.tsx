@@ -94,10 +94,14 @@ export default function Upload() {
 
   const handleAudioUpload = async () => {
     if (!audioFile) return
+    if (selectedHousehold === '') {
+      setAudioError('Please select a client before uploading.')
+      return
+    }
     setAudioUploading(true)
     setAudioError(null)
     try {
-      const hhId = selectedHousehold ? parseInt(selectedHousehold, 10) : undefined
+      const hhId = selectedHousehold === 'new' ? undefined : parseInt(selectedHousehold, 10)
       const res = await uploadAudio(audioFile, hhId)
       setAudioResult(res.data)
       setAudioFile(null)
@@ -267,17 +271,25 @@ export default function Upload() {
 
           {/* Household Selector */}
           <div className="form-group" style={{ marginBottom: 16 }}>
-            <label className="form-label">Link to Household (optional)</label>
+            <label className="form-label">
+              Select Client <span style={{ color: 'var(--color-error)' }}>*</span>
+            </label>
             <select
               className="form-input form-select"
               value={selectedHousehold}
-              onChange={e => setSelectedHousehold(e.target.value)}
+              onChange={e => { setSelectedHousehold(e.target.value); setAudioError(null) }}
             >
-              <option value="">— Select household —</option>
+              <option value="">— Choose a client —</option>
+              <option value="new">＋ New Client</option>
               {households.map(h => (
                 <option key={h.id} value={h.id}>{h.name}</option>
               ))}
             </select>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+              {selectedHousehold === 'new'
+                ? 'A new client record will be created after review.'
+                : 'The agent will fetch this client\'s current data from the database.'}
+            </p>
           </div>
 
           {/* Drop Zone */}
@@ -344,7 +356,7 @@ export default function Upload() {
             className="btn btn-primary"
             style={{ marginTop: 16, width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #7c3aed, #2563eb)' }}
             onClick={handleAudioUpload}
-            disabled={!audioFile || audioUploading}
+            disabled={!audioFile || audioUploading || selectedHousehold === ''}
           >
             {audioUploading ? (
               <><div className="spinner spinner-sm" style={{ borderTopColor: 'white' }} />Transcribing…</>

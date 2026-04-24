@@ -15,8 +15,13 @@ openpyxl==3.1.2
 numpy==1.26.4
 
 # AI / Audio
-anthropic>=0.95.0          # Claude API (audio insight extraction)
+anthropic>=0.95.0          # Claude API (used by LangChain under the hood)
 openai-whisper==20231117   # Local audio transcription (requires ffmpeg)
+
+# LangChain / LangGraph
+langgraph>=0.2.0            # Stateful agent graph orchestration
+langchain-anthropic>=0.3.0  # LangChain adapter for Claude (structured output)
+langchain-core>=0.3.0       # Base abstractions (messages, runnables)
 
 # Utilities
 pydantic==2.7.1
